@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pool } from './pool.js';
