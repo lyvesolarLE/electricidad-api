@@ -50,7 +50,7 @@ export function buildApp() {
   app.register(instalacionesModule, { prefix: '/instalaciones' });
   app.register(cotizacionesModule, { prefix: '/cotizaciones' });
   app.register(pagosModule, { prefix: '/pagos' });
-  app.register(whatsappModule, { prefix: '/whatsapp' });
+  app.register(whatsappModule, { prefix: '/whatsapp', config: { publica: true } });
   app.register(notificacionesModule, { prefix: '/notificaciones' });
 
   return app;
