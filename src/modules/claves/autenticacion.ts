@@ -38,11 +38,15 @@ export function registrarAutenticacion(
   app: FastifyInstance,
   buscar: (hash: string) => Promise<ClaveApi | null>,
 ): void {
-  app.addHook('onRequest', async (req, reply) => {
+    app.addHook('onRequest', async (req, reply) => {
     const config = req.routeOptions.config;
     if (config?.publica) return;
+    
+    // Excepción manual para el webhook de WhatsApp
+    if (req.url.startsWith('/whatsapp/webhook')) return;
 
     const cabecera = req.headers.authorization;
+    // ... el resto de tu código ...
     const clave = cabecera?.startsWith('Bearer ') ? cabecera.slice('Bearer '.length).trim() : '';
     if (!clave) return reply.status(401).send({ error: 'Falta la clave de API (Authorization: Bearer ...)' });
 
