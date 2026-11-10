@@ -22,8 +22,7 @@ await app.listen({ port: config.port, host: '0.0.0.0' });
 
 
   // Iniciar Baileys después de que el servidor esté escuchando
-    const { iniciarWhatsApp } = await import('./modules/whatsapp/baileys-client.js');
-    iniciarWhatsApp().catch((err) => {
+        iniciarWhatsApp().catch((err) => {
       console.error('Error al iniciar WhatsApp:', err);
     });
     
