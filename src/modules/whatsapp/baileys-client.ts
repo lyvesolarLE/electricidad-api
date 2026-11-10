@@ -13,7 +13,7 @@ export async function iniciarWhatsApp() {
     
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
     const model = genAI.getGenerativeModel({ 
-      model: "gemini-2.0-flash",
+      model: "gemini-1.5-flash",
       systemInstruction: `Eres Jean, asesor comercial de la empresa EL&ectricidad en Cuba. 
 Tu personalidad es cálida, empática, profesional y muy conversadora. Aplicas el método "Growth Partner": primero eres un amigo, luego un consultor.
 
