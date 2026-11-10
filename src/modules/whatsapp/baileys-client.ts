@@ -6,38 +6,19 @@ import path from 'path';
 
 const chatsActivos = new Map<string, any>();
 
-// Función para obtener dinámicamente un modelo válido
-async function obtenerModeloDisponible(ai: any) {
-  try {
-    // Preguntamos a la API qué modelos tenemos disponibles
-    const modelosResponse = await ai.models.list();
-    
-    // Buscamos el primer modelo que sirva para chatear (generateContent)
-    for await (const modelo of modelosResponse) {
-      if (modelo.supportedGenerationMethods?.includes('generateContent') && modelo.name.includes('gemini')) {
-        const nombreModelo = modelo.name.replace('models/', ''); // Limpiamos el prefijo
-        console.log(`[MODELO] Usando modelo disponible: ${nombreModelo}`);
-        return nombreModelo;
-      }
-    }
-  } catch (error) {
-    console.warn('[MODELO] No se pudo listar modelos, usando alias de respaldo...');
-  }
-  
-  // Si falla la lista, usamos el alias 'latest' que apunta al modelo Flash más reciente
-  console.log('[MODELO] Usando alias de respaldo: gemini-flash-latest');
-  return 'gemini-flash-latest';
-}
-
 export async function iniciarWhatsApp() {
   try {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
     const { version } = await fetchLatestWaWebVersion();
     
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    // FORZAMOS LA API v1beta PARA EVITAR EL ERROR 404 EN v1
+    const ai = new GoogleGenAI({ 
+      apiKey: process.env.GEMINI_API_KEY,
+      apiVersion: 'v1beta' 
+    });
     
-    // Obtenemos el nombre del modelo dinámicamente al arrancar
-    const nombreModelo = await obtenerModeloDisponible(ai);
+    // Usamos un modelo explícito y estable
+    const nombreModelo = 'gemini-3.8-flash';
 
     const sock = makeWASocket({
       auth: state,
@@ -86,9 +67,28 @@ export async function iniciarWhatsApp() {
 
           if (!chatsActivos.has(remitente)) {
             const chat = ai.chats.create({
-              model: nombreModelo, // Usamos el modelo que encontramos dinámicamente
+              model: nombreModelo,
               config: {
-                systemInstruction: `Eres Jean...` // (Tu prompt de Growth Partner se mantiene igual)
+                systemInstruction: `Eres Jean, asesor comercial de la empresa EL&ectricidad en Cuba. 
+Tu personalidad es cálida, empática, profesional y muy conversadora. Aplicas el método "Growth Partner": primero eres un amigo, luego un consultor.
+
+FASES ESTRICTAS DE LA CONVERSACIÓN:
+- FASE 1 (RAPPORT): Si el cliente solo te saluda, NO LE HABLES DE PANELES. Responde con calidez, preséntate (Jean), pregunta cómo está. Espera a que diga por qué escribe.
+- FASE 2 (TRANSICIÓN): Si no menciona el tema solar, pregúntale en qué le puedes ayudar.
+- FASE 3 (DIAGNÓSTICO): Solo cuando mencione energía, paneles o apagones, haz preguntas (¿Es para casa, negocio?).
+- FASE 4 (CIERRE): Invítalo a llamar a los teléfonos oficiales para la cotización.
+
+REGLAS:
+1. NUNCA uses tablas de Markdown. Usa viñetas (-), emojis (☀️, 🔋, ⚡) y negritas (*texto*).
+2. NO SUELTES PRECIOS NI GARANTÍAS AL AZAR. Solo si el cliente lo pide explícitamente.
+3. Si preguntan por experiencia, menciona: +200km de cables, +30 industrias, +200 viviendas, certificados fotovoltaicos, +20 instalaciones con 0.4 MW. Paneles de 550W a 650W (comercial 620W).
+4. INSTRUCCIÓN DE FOTOS: Si preguntan por experiencia o piden fotos, incluye la etiqueta exacta [MOSTRAR_FOTOS] al final.
+
+DATOS BAJO DEMANDA (Solo si preguntan):
+- Mano de obra: Inversor+batería (800 USD) / Inversor+batería+10 paneles (1200 USD).
+- Pagos: CUP (al cambio del toque), USD, Euro, Pesos Mexicanos, Zelle.
+- Garantía: 1 año (se anula si manipulan). Transporte y mantenimiento no incluidos.
+- Teléfonos: +5359524159 y +5354817974.`
               }
             });
             chatsActivos.set(remitente, chat);
