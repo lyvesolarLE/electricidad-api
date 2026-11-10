@@ -40,7 +40,7 @@ DATOS BAJO DEMANDA (Solo si preguntan):
       auth: state,
       version: version,
       // LA MAGIA ESTÁ AQUÍ: Forzamos a que se identifique como Mac
-      browser: Browsers.macOS('Desktop'), 
+      browser: Browsers.ubuntu('Chrome'), 
     });
 
     sock.ev.on('creds.update', saveCreds);
