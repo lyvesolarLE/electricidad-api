@@ -1,17 +1,17 @@
 // @ts-nocheck
 import makeWASocket, { DisconnectReason, useMultiFileAuthState, Browsers, fetchLatestWaWebVersion } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
-import { GoogleGenAI } from '@google/genai'; // <-- Nueva librería oficial
+import { GoogleGenAI } from '@google/genai'; // <-- SDK oficial actual
 import path from 'path';
 
-const historialChats = new Map<string, any[]>();
+// Ahora guardaremos los objetos de chat en memoria por cada usuario
+const chatsActivos = new Map<string, any>();
 
 export async function iniciarWhatsApp() {
   try {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
     const { version } = await fetchLatestWaWebVersion();
     
-    // Inicializamos el nuevo SDK de Google
     const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
     const sock = makeWASocket({
@@ -41,7 +41,6 @@ export async function iniciarWhatsApp() {
       if (connection === 'close') {
         const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
         console.log(`\n❌ Conexión cerrada. Código: ${statusCode}`);
-        
         if (statusCode !== DisconnectReason.loggedOut) {
           setTimeout(() => iniciarWhatsApp(), 5000);
         }
@@ -60,16 +59,12 @@ export async function iniciarWhatsApp() {
         try {
           await sock.sendPresenceUpdate('composing', remitente);
 
-          let historial = historialChats.get(remitente) || [];
-          historial.push({ role: 'user', content: texto });
-          if (historial.length > 12) historial = historial.slice(-12);
-
-          // Llamada al nuevo modelo gemini-3.5-flash
-          const response = await ai.models.generateContent({
-            model: 'gemini-3.5-flash',
-            contents: historial,
-            config: {
-              systemInstruction: `Eres Jean, asesor comercial de la empresa EL&ectricidad en Cuba. 
+          // Si no existe un chat para este usuario, lo creamos con su personalidad
+          if (!chatsActivos.has(remitente)) {
+            const chat = ai.chats.create({
+              model: 'gemini-2.5-flash',
+              config: {
+                systemInstruction: `Eres Jean, asesor comercial de la empresa EL&ectricidad en Cuba. 
 Tu personalidad es cálida, empática, profesional y muy conversadora. Aplicas el método "Growth Partner": primero eres un amigo, luego un consultor.
 
 FASES ESTRICTAS DE LA CONVERSACIÓN:
@@ -89,9 +84,14 @@ DATOS BAJO DEMANDA (Solo si preguntan):
 - Pagos: CUP (al cambio del toque), USD, Euro, Pesos Mexicanos, Zelle.
 - Garantía: 1 año (se anula si manipulan). Transporte y mantenimiento no incluidos.
 - Teléfonos: +5359524159 y +5354817974.`
-            }
-          });
+              }
+            });
+            chatsActivos.set(remitente, chat);
+          }
 
+          // Enviamos el mensaje al chat existente (el SDK maneja el historial automáticamente)
+          const chat = chatsActivos.get(remitente);
+          const response = await chat.sendMessage({ message: texto });
           const respuestaIA = response.text || '';
 
           if (respuestaIA.includes('[MOSTRAR_FOTOS]')) {
@@ -108,8 +108,6 @@ DATOS BAJO DEMANDA (Solo si preguntan):
             await sock.sendMessage(remitente, { text: respuestaIA });
           }
 
-          historial.push({ role: 'assistant', content: respuestaIA });
-          historialChats.set(remitente, historial);
           console.log(`🤖 Jean: ${respuestaIA}`);
           
         } catch (error) {
