@@ -4,15 +4,20 @@ import { Boom } from '@hapi/boom';
 import { GoogleGenAI } from '@google/genai';
 import path from 'path';
 
-// Guardaremos el historial en el formato exacto de Google
-const historiales = new Map<string, any[]>();
+const chatsActivos = new Map<string, any>();
+
+// Lista de modelos en orden de preferencia (del más capaz al más ligero)
+const MODELOS_DISPONIBLES = [
+  'gemini-3.6-flash',
+  'gemini-3.5-flash-lite',
+  'gemini-3.1-flash-lite'
+];
 
 export async function iniciarWhatsApp() {
   try {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
     const { version } = await fetchLatestWaWebVersion();
     
-    // Inicializamos SIN forzar apiVersion, dejando que el SDK elija la correcta
     const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
     const sock = makeWASocket({
@@ -60,21 +65,12 @@ export async function iniciarWhatsApp() {
         try {
           await sock.sendPresenceUpdate('composing', remitente);
 
-          // 1. Recuperamos el historial del cliente
-          let historial = historiales.get(remitente) || [];
-          
-          // 2. Agregamos el mensaje nuevo en el formato que exige Google
-          historial.push({ role: 'user', parts: [{ text: texto }] });
-
-          // (Opcional) Limitar a 12 mensajes para no gastar tokens
-          if (historial.length > 12) historial = historial.slice(-12);
-
-          // 3. Llamamos al modelo (Usamos gemini-3.8-flash sin forzar la versión de la API)
-          const response = await ai.models.generateContent({
-            model: 'gemini-3.8-flash',
-            contents: historial,
-            config: {
-              systemInstruction: `Eres Jean, asesor comercial de la empresa EL&ectricidad en Cuba. 
+          if (!chatsActivos.has(remitente)) {
+            // Creamos el chat con el primer modelo de la lista por defecto
+            const chat = ai.chats.create({
+              model: MODELOS_DISPONIBLES[0],
+              config: {
+                systemInstruction: `Eres Jean, asesor comercial de la empresa EL&ectricidad en Cuba. 
 Tu personalidad es cálida, empática, profesional y muy conversadora. Aplicas el método "Growth Partner": primero eres un amigo, luego un consultor.
 
 FASES ESTRICTAS DE LA CONVERSACIÓN:
@@ -94,16 +90,40 @@ DATOS BAJO DEMANDA (Solo si preguntan):
 - Pagos: CUP (al cambio del toque), USD, Euro, Pesos Mexicanos, Zelle.
 - Garantía: 1 año (se anula si manipulan). Transporte y mantenimiento no incluidos.
 - Teléfonos: +5359524159 y +5354817974.`
+              }
+            });
+            chatsActivos.set(remitente, chat);
+          }
+
+          const chat = chatsActivos.get(remitente);
+          let respuestaIA = '';
+          let exito = false;
+          let ultimoError = null;
+
+          // Bucle de Failover: intenta con cada modelo hasta que uno funcione
+          for (const modelo of MODELOS_DISPONIBLES) {
+            try {
+              console.log(`[IA] Intentando con modelo: ${modelo}`);
+              // Si el chat se creó con otro modelo, lo actualizamos temporalmente
+              chat.model = modelo; 
+              
+              const response = await chat.sendMessage({ message: texto });
+              respuestaIA = response.text || '';
+              exito = true;
+              console.log(`[IA] Éxito con modelo: ${modelo}`);
+              break; // Si funciona, salimos del bucle
+            } catch (err) {
+              ultimoError = err;
+              console.warn(`[IA] Modelo ${modelo} falló (posible 503). Probando siguiente...`);
+              // Pequeña pausa antes de reintentar con el siguiente modelo
+              await new Promise(r => setTimeout(r, 1000)); 
             }
-          });
+          }
 
-          const respuestaIA = response.text || '';
+          if (!exito) {
+            throw ultimoError; // Si todos los modelos fallan, lanzamos el error
+          }
 
-          // 4. Guardamos la respuesta de Jean en el historial (con el rol 'model')
-          historial.push({ role: 'model', parts: [{ text: respuestaIA }] });
-          historiales.set(remitente, historial);
-
-          // 5. Lógica de Fotos
           if (respuestaIA.includes('[MOSTRAR_FOTOS]')) {
             const textoLimpio = respuestaIA.replace('[MOSTRAR_FOTOS]', '').trim();
             await sock.sendMessage(remitente, { text: textoLimpio });
@@ -121,8 +141,8 @@ DATOS BAJO DEMANDA (Solo si preguntan):
           console.log(`🤖 Jean: ${respuestaIA}`);
           
         } catch (error) {
-          console.error('❌ Error IA:', error);
-          await sock.sendMessage(remitente, { text: 'Disculpe, tenemos problemas técnicos. Llámenos al +5359524159.' });
+          console.error('❌ Error IA definitivo (todos los modelos fallaron):', error);
+          await sock.sendMessage(remitente, { text: 'Disculpe, nuestro asesor virtual está en mantenimiento por alta demanda. Por favor, llámenos al +5359524159.' });
         }
       }
     });
