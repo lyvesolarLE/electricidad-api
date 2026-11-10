@@ -4,21 +4,16 @@ import { Boom } from '@hapi/boom';
 import { GoogleGenAI } from '@google/genai';
 import path from 'path';
 
-const chatsActivos = new Map<string, any>();
+// Guardaremos el historial en el formato exacto de Google
+const historiales = new Map<string, any[]>();
 
 export async function iniciarWhatsApp() {
   try {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
     const { version } = await fetchLatestWaWebVersion();
     
-    // FORZAMOS LA API v1beta PARA EVITAR EL ERROR 404 EN v1
-    const ai = new GoogleGenAI({ 
-      apiKey: process.env.GEMINI_API_KEY,
-      apiVersion: 'v1beta' 
-    });
-    
-    // Usamos un modelo explícito y estable
-    const nombreModelo = 'gemini-3.8-flash';
+    // Inicializamos SIN forzar apiVersion, dejando que el SDK elija la correcta
+    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
     const sock = makeWASocket({
       auth: state,
@@ -65,11 +60,21 @@ export async function iniciarWhatsApp() {
         try {
           await sock.sendPresenceUpdate('composing', remitente);
 
-          if (!chatsActivos.has(remitente)) {
-            const chat = ai.chats.create({
-              model: nombreModelo,
-              config: {
-                systemInstruction: `Eres Jean, asesor comercial de la empresa EL&ectricidad en Cuba. 
+          // 1. Recuperamos el historial del cliente
+          let historial = historiales.get(remitente) || [];
+          
+          // 2. Agregamos el mensaje nuevo en el formato que exige Google
+          historial.push({ role: 'user', parts: [{ text: texto }] });
+
+          // (Opcional) Limitar a 12 mensajes para no gastar tokens
+          if (historial.length > 12) historial = historial.slice(-12);
+
+          // 3. Llamamos al modelo (Usamos gemini-3.8-flash sin forzar la versión de la API)
+          const response = await ai.models.generateContent({
+            model: 'gemini-3.8-flash',
+            contents: historial,
+            config: {
+              systemInstruction: `Eres Jean, asesor comercial de la empresa EL&ectricidad en Cuba. 
 Tu personalidad es cálida, empática, profesional y muy conversadora. Aplicas el método "Growth Partner": primero eres un amigo, luego un consultor.
 
 FASES ESTRICTAS DE LA CONVERSACIÓN:
@@ -89,15 +94,16 @@ DATOS BAJO DEMANDA (Solo si preguntan):
 - Pagos: CUP (al cambio del toque), USD, Euro, Pesos Mexicanos, Zelle.
 - Garantía: 1 año (se anula si manipulan). Transporte y mantenimiento no incluidos.
 - Teléfonos: +5359524159 y +5354817974.`
-              }
-            });
-            chatsActivos.set(remitente, chat);
-          }
+            }
+          });
 
-          const chat = chatsActivos.get(remitente);
-          const response = await chat.sendMessage({ message: texto });
           const respuestaIA = response.text || '';
 
+          // 4. Guardamos la respuesta de Jean en el historial (con el rol 'model')
+          historial.push({ role: 'model', parts: [{ text: respuestaIA }] });
+          historiales.set(remitente, historial);
+
+          // 5. Lógica de Fotos
           if (respuestaIA.includes('[MOSTRAR_FOTOS]')) {
             const textoLimpio = respuestaIA.replace('[MOSTRAR_FOTOS]', '').trim();
             await sock.sendMessage(remitente, { text: textoLimpio });
