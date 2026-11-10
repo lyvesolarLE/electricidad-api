@@ -2,15 +2,14 @@
 import makeWASocket, { DisconnectReason, useMultiFileAuthState, Browsers, fetchLatestWaWebVersion } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import { GoogleGenAI } from '@google/genai';
-import path from 'path';
 
 const chatsActivos = new Map<string, any>();
 
-// Lista de modelos en orden de preferencia (del más capaz al más ligero)
+// Lista de modelos en orden de preferencia para evitar el error 503
 const MODELOS_DISPONIBLES = [
-  'gemini-3.6-flash',
-  'gemini-3.5-flash-lite',
-  'gemini-3.1-flash-lite'
+  'gemini-2.0-flash',
+  'gemini-1.5-flash',
+  'gemini-1.5-flash-8b'
 ];
 
 export async function iniciarWhatsApp() {
@@ -66,7 +65,6 @@ export async function iniciarWhatsApp() {
           await sock.sendPresenceUpdate('composing', remitente);
 
           if (!chatsActivos.has(remitente)) {
-            // Creamos el chat con el primer modelo de la lista por defecto
             const chat = ai.chats.create({
               model: MODELOS_DISPONIBLES[0],
               config: {
@@ -100,40 +98,56 @@ DATOS BAJO DEMANDA (Solo si preguntan):
           let exito = false;
           let ultimoError = null;
 
-          // Bucle de Failover: intenta con cada modelo hasta que uno funcione
+          // Sistema de Failover para evitar el error 503 de Google
           for (const modelo of MODELOS_DISPONIBLES) {
             try {
               console.log(`[IA] Intentando con modelo: ${modelo}`);
-              // Si el chat se creó con otro modelo, lo actualizamos temporalmente
               chat.model = modelo; 
-              
               const response = await chat.sendMessage({ message: texto });
               respuestaIA = response.text || '';
               exito = true;
               console.log(`[IA] Éxito con modelo: ${modelo}`);
-              break; // Si funciona, salimos del bucle
+              break; 
             } catch (err) {
               ultimoError = err;
-              console.warn(`[IA] Modelo ${modelo} falló (posible 503). Probando siguiente...`);
-              // Pequeña pausa antes de reintentar con el siguiente modelo
+              console.warn(`[IA] Modelo ${modelo} falló. Probando siguiente...`);
               await new Promise(r => setTimeout(r, 1000)); 
             }
           }
 
           if (!exito) {
-            throw ultimoError; // Si todos los modelos fallan, lanzamos el error
+            throw ultimoError; 
           }
 
+          // Lógica de Fotos usando enlaces Raw de GitHub
           if (respuestaIA.includes('[MOSTRAR_FOTOS]')) {
             const textoLimpio = respuestaIA.replace('[MOSTRAR_FOTOS]', '').trim();
             await sock.sendMessage(remitente, { text: textoLimpio });
+            
             try {
-              const rutaFoto1 = path.join(process.cwd(), 'assets', 'foto1.jpg');
-              const rutaFoto2 = path.join(process.cwd(), 'assets', 'foto2.jpg');
-              await sock.sendMessage(remitente, { image: { url: rutaFoto1 }, caption: 'Instalación residencial' });
-              await new Promise(r => setTimeout(r, 1000)); 
-              await sock.sendMessage(remitente, { image: { url: rutaFoto2 }, caption: 'Sistema industrial' });
-            } catch (errorFoto) { console.error('Error fotos:', errorFoto); }
+              const listaFotos = [
+                'https://raw.githubusercontent.com/lyvesolarLE/electricidad-api/main/assets/Foto1.jpg',
+                'https://raw.githubusercontent.com/lyvesolarLE/electricidad-api/main/assets/Foto2.jpg',
+                'https://raw.githubusercontent.com/lyvesolarLE/electricidad-api/main/assets/Foto3.jpg',
+                'https://raw.githubusercontent.com/lyvesolarLE/electricidad-api/main/assets/Foto4.jpg',
+                'https://raw.githubusercontent.com/lyvesolarLE/electricidad-api/main/assets/Foto5.jpg',
+                'https://raw.githubusercontent.com/lyvesolarLE/electricidad-api/main/assets/Foto6.jpg',
+                'https://raw.githubusercontent.com/lyvesolarLE/electricidad-api/main/assets/Foto7.jpg'
+              ];
+              
+              for (let i = 0; i < listaFotos.length; i++) {
+                await sock.sendMessage(remitente, { 
+                  image: { url: listaFotos[i] }, 
+                  caption: i === 0 ? 'Instalaciones reales de EL&ectricidad' : '' 
+                });
+                await new Promise(r => setTimeout(r, 1500)); 
+              }
+              
+              console.log(`📸 Se enviaron ${listaFotos.length} fotos a ${remitente}`);
+              
+            } catch (errorFoto) { 
+              console.error('Error al enviar fotos:', errorFoto); 
+            }
           } else {
             await sock.sendMessage(remitente, { text: respuestaIA });
           }
@@ -141,8 +155,8 @@ DATOS BAJO DEMANDA (Solo si preguntan):
           console.log(`🤖 Jean: ${respuestaIA}`);
           
         } catch (error) {
-          console.error('❌ Error IA definitivo (todos los modelos fallaron):', error);
-          await sock.sendMessage(remitente, { text: 'Disculpe, nuestro asesor virtual está en mantenimiento por alta demanda. Por favor, llámenos al +5359524159.' });
+          console.error('❌ Error IA definitivo:', error);
+          await sock.sendMessage(remitente, { text: 'Disculpe, nuestro asesor virtual está en mantenimiento. Por favor, llámenos al +5359524159.' });
         }
       }
     });
