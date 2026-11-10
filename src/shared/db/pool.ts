@@ -1,8 +1,9 @@
-import pg from 'pg';
-import { config } from '../config.js';
+import { Pool } from 'pg';
+import { config } from '../config.js'; 
 
-export const pool = new pg.Pool({
-  connectionString: config.databaseUrl,
-  max: 10,
-  connectionTimeoutMillis: 5000,
+export const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  connectionTimeoutMillis: 30000, // 30 segundos de espera máxima
+  idleTimeoutMillis: 30000,
+  max: 10
 });
