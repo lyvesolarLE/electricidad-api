@@ -2,10 +2,11 @@
 import makeWASocket, { DisconnectReason, useMultiFileAuthState, Browsers, fetchLatestWaWebVersion } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import { GoogleGenAI } from '@google/genai';
+import { pool } from '../../shared/db/pool.js'; // Asegúrate de que esta ruta sea correcta
 
 const chatsActivos = new Map<string, any>();
+const clientesRegistrados = new Set<string>(); 
 
-// Lista de modelos ACTUALES y compatibles con v1beta
 const MODELOS_DISPONIBLES = [
   'gemini-3.8-flash',
   'gemini-3.5-flash-lite'
@@ -16,7 +17,7 @@ export async function iniciarWhatsApp() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
     const { version } = await fetchLatestWaWebVersion();
     
-    // FORZAMOS LA API v1beta PARA QUE LOS MODELOS NUEVOS FUNCIONEN
+    // Forzamos v1beta para evitar el error 404 de Google
     const ai = new GoogleGenAI({ 
       apiKey: process.env.GEMINI_API_KEY,
       httpOptions: { apiVersion: 'v1beta' }
@@ -61,9 +62,36 @@ export async function iniciarWhatsApp() {
       
       const texto = msg.message.conversation || msg.message.extendedTextMessage?.text;
       const remitente = msg.key.remoteJid;
+      const numeroLimpio = remitente.split('@')[0];
+      const nombreCliente = msg.pushName || 'Cliente Desconocido';
 
       if (texto) {
-        console.log(`Mensaje de ${remitente}: ${texto}`);
+        console.log(`Mensaje de ${remitente} (${nombreCliente}): ${texto}`);
+
+        // 1. GUARDAR EN BASE DE DATOS Y AVISARTE A TI
+        if (!clientesRegistrados.has(remitente)) {
+          clientesRegistrados.add(remitente);
+          
+          try {
+            // Guardar en PostgreSQL (Neon)
+            await pool.query(
+              `INSERT INTO clientes (telefono_whatsapp, nombre) 
+               VALUES ($1, $2) 
+               ON CONFLICT (telefono_whatsapp) DO NOTHING`,
+              [numeroLimpio, nombreCliente]
+            );
+            
+            // Enviarte un mensaje de alerta a TU número personal
+            const tuNumeroAdmin = '5359524159@s.whatsapp.net'; 
+            await sock.sendMessage(tuNumeroAdmin, { 
+              text: `🔔 *NUEVO CLIENTE*\n\nNombre: ${nombreCliente}\nNúmero: +${numeroLimpio}\nMensaje: ${texto}` 
+            });
+            console.log('✅ Cliente guardado y alerta enviada al admin.');
+          } catch (dbError) {
+            console.error('⚠️ Error guardando cliente en BD:', dbError.message);
+          }
+        }
+
         try {
           await sock.sendPresenceUpdate('composing', remitente);
 
@@ -84,7 +112,7 @@ REGLAS:
 1. NUNCA uses tablas de Markdown. Usa viñetas (-), emojis (☀️, 🔋, ⚡) y negritas (*texto*).
 2. NO SUELTES PRECIOS NI GARANTÍAS AL AZAR. Solo si el cliente lo pide explícitamente.
 3. Si preguntan por experiencia, menciona: +200km de cables, +30 industrias, +200 viviendas, certificados fotovoltaicos, +20 instalaciones con 0.4 MW. Paneles de 550W a 650W (comercial 620W).
-4. INSTRUCCIÓN DE FOTOS: Si preguntan por experiencia o piden fotos, incluye la etiqueta exacta [MOSTRAR_FOTOS] al final.
+4. INSTRUCCIÓN DE FOTOS: Si preguntan por experiencia o piden fotos, incluye la etiqueta exacta [MOSTRAR_FOTOS] al final de tu respuesta.
 
 DATOS BAJO DEMANDA (Solo si preguntan):
 - Mano de obra: Inversor+batería (800 USD) / Inversor+batería+10 paneles (1200 USD).
@@ -101,41 +129,37 @@ DATOS BAJO DEMANDA (Solo si preguntan):
           let exito = false;
           let ultimoError = null;
 
-          // Sistema de Failover con los modelos actualizados
+          // Sistema de Failover (Respaldo)
           for (const modelo of MODELOS_DISPONIBLES) {
             try {
-              console.log(`[IA] Intentando con modelo: ${modelo}`);
               chat.model = modelo; 
               const response = await chat.sendMessage({ message: texto });
               respuestaIA = response.text || '';
               exito = true;
-              console.log(`[IA] Éxito con modelo: ${modelo}`);
               break; 
             } catch (err) {
               ultimoError = err;
-              console.warn(`[IA] Modelo ${modelo} falló. Probando siguiente...`);
               await new Promise(r => setTimeout(r, 1000)); 
             }
           }
 
-          if (!exito) {
-            throw ultimoError; 
-          }
+          if (!exito) throw ultimoError; 
 
-          // Lógica de Fotos usando enlaces Raw de GitHub
-          if (respuestaIA.includes('[MOSTRAR_FOTOS]')) {
+          // LÓGICA DE FOTOS (Forzada si el cliente pide fotos o experiencia)
+          const pidioFotos = texto.toLowerCase().includes('foto') || texto.toLowerCase().includes('experiencia') || texto.toLowerCase().includes('instalacion') || texto.toLowerCase().includes('trabajo');
+          
+          if (respuestaIA.includes('[MOSTRAR_FOTOS]') || pidioFotos) {
             const textoLimpio = respuestaIA.replace('[MOSTRAR_FOTOS]', '').trim();
-            await sock.sendMessage(remitente, { text: textoLimpio });
+            if(textoLimpio) await sock.sendMessage(remitente, { text: textoLimpio });
             
+            console.log('📸 Iniciando envío de fotos...');
             try {
               const listaFotos = [
                 'https://raw.githubusercontent.com/lyvesolarLE/electricidad-api/main/assets/Foto1.jpg',
                 'https://raw.githubusercontent.com/lyvesolarLE/electricidad-api/main/assets/Foto2.jpg',
                 'https://raw.githubusercontent.com/lyvesolarLE/electricidad-api/main/assets/Foto3.jpg',
                 'https://raw.githubusercontent.com/lyvesolarLE/electricidad-api/main/assets/Foto4.jpg',
-                'https://raw.githubusercontent.com/lyvesolarLE/electricidad-api/main/assets/Foto5.jpg',
-                'https://raw.githubusercontent.com/lyvesolarLE/electricidad-api/main/assets/Foto6.jpg',
-                'https://raw.githubusercontent.com/lyvesolarLE/electricidad-api/main/assets/Foto7.jpg'
+                'https://raw.githubusercontent.com/lyvesolarLE/electricidad-api/main/assets/Foto5.jpg'
               ];
               
               for (let i = 0; i < listaFotos.length; i++) {
@@ -145,11 +169,9 @@ DATOS BAJO DEMANDA (Solo si preguntan):
                 });
                 await new Promise(r => setTimeout(r, 1500)); 
               }
-              
-              console.log(`📸 Se enviaron ${listaFotos.length} fotos a ${remitente}`);
-              
+              console.log(`📸 Fotos enviadas con éxito.`);
             } catch (errorFoto) { 
-              console.error('Error al enviar fotos:', errorFoto); 
+              console.error('❌ Error al enviar fotos:', errorFoto); 
             }
           } else {
             await sock.sendMessage(remitente, { text: respuestaIA });
