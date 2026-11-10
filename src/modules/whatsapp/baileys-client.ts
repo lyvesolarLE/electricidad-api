@@ -62,7 +62,8 @@ DATOS BAJO DEMANDA (Solo si el cliente pregunta explícitamente):
         console.log('\n======================================================');
         console.log('📲 ESCANEA ESTE CÓDIGO QR CON TU WHATSAPP:');
         console.log('======================================================\n');
-        qrcode.generate(qr, { small: true });
+                const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(qr)}`;
+        console.log(qrUrl);
       }
 
       if (connection === 'open') {
