@@ -5,11 +5,10 @@ import { GoogleGenAI } from '@google/genai';
 
 const chatsActivos = new Map<string, any>();
 
-// Lista de modelos en orden de preferencia para evitar el error 503
+// Lista de modelos ACTUALES y compatibles con v1beta
 const MODELOS_DISPONIBLES = [
-  'gemini-2.0-flash',
-  'gemini-1.5-flash',
-  'gemini-1.5-flash-8b'
+  'gemini-3.8-flash',
+  'gemini-3.5-flash-lite'
 ];
 
 export async function iniciarWhatsApp() {
@@ -17,7 +16,11 @@ export async function iniciarWhatsApp() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
     const { version } = await fetchLatestWaWebVersion();
     
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    // FORZAMOS LA API v1beta PARA QUE LOS MODELOS NUEVOS FUNCIONEN
+    const ai = new GoogleGenAI({ 
+      apiKey: process.env.GEMINI_API_KEY,
+      httpOptions: { apiVersion: 'v1beta' }
+    });
 
     const sock = makeWASocket({
       auth: state,
@@ -98,7 +101,7 @@ DATOS BAJO DEMANDA (Solo si preguntan):
           let exito = false;
           let ultimoError = null;
 
-          // Sistema de Failover para evitar el error 503 de Google
+          // Sistema de Failover con los modelos actualizados
           for (const modelo of MODELOS_DISPONIBLES) {
             try {
               console.log(`[IA] Intentando con modelo: ${modelo}`);
