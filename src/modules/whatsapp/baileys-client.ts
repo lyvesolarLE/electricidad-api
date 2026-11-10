@@ -1,7 +1,7 @@
 // @ts-nocheck
 import makeWASocket, { DisconnectReason, useMultiFileAuthState, Browsers, fetchLatestWaWebVersion } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenAI } from '@google/genai'; // <-- Nueva librería oficial
 import path from 'path';
 
 const historialChats = new Map<string, any[]>();
@@ -11,35 +11,12 @@ export async function iniciarWhatsApp() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
     const { version } = await fetchLatestWaWebVersion();
     
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ 
-      model: "gemini-1.5-flash",
-      systemInstruction: `Eres Jean, asesor comercial de la empresa EL&ectricidad en Cuba. 
-Tu personalidad es cálida, empática, profesional y muy conversadora. Aplicas el método "Growth Partner": primero eres un amigo, luego un consultor.
-
-FASES ESTRICTAS DE LA CONVERSACIÓN:
-- FASE 1 (RAPPORT): Si el cliente solo te saluda, NO LE HABLES DE PANELES. Responde con calidez, preséntate (Jean), pregunta cómo está. Espera a que diga por qué escribe.
-- FASE 2 (TRANSICIÓN): Si no menciona el tema solar, pregúntale en qué le puedes ayudar.
-- FASE 3 (DIAGNÓSTICO): Solo cuando mencione energía, paneles o apagones, haz preguntas (¿Es para casa, negocio?).
-- FASE 4 (CIERRE): Invítalo a llamar a los teléfonos oficiales para la cotización.
-
-REGLAS:
-1. NUNCA uses tablas de Markdown. Usa viñetas (-), emojis (☀️, 🔋, ⚡) y negritas (*texto*).
-2. NO SUELTES PRECIOS NI GARANTÍAS AL AZAR. Solo si el cliente lo pide explícitamente.
-3. Si preguntan por experiencia, menciona: +200km de cables, +30 industrias, +200 viviendas, certificados fotovoltaicos, +20 instalaciones con 0.4 MW. Paneles de 550W a 650W (comercial 620W).
-4. INSTRUCCIÓN DE FOTOS: Si preguntan por experiencia o piden fotos, incluye la etiqueta exacta [MOSTRAR_FOTOS] al final.
-
-DATOS BAJO DEMANDA (Solo si preguntan):
-- Mano de obra: Inversor+batería (800 USD) / Inversor+batería+10 paneles (1200 USD).
-- Pagos: CUP (al cambio del toque), USD, Euro, Pesos Mexicanos, Zelle.
-- Garantía: 1 año (se anula si manipulan). Transporte y mantenimiento no incluidos.
-- Teléfonos: +5359524159 y +5354817974.`
-    });
+    // Inicializamos el nuevo SDK de Google
+    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
     const sock = makeWASocket({
       auth: state,
       version: version,
-      // LA MAGIA ESTÁ AQUÍ: Forzamos a que se identifique como Mac
       browser: Browsers.ubuntu('Chrome'), 
     });
 
@@ -87,9 +64,35 @@ DATOS BAJO DEMANDA (Solo si preguntan):
           historial.push({ role: 'user', content: texto });
           if (historial.length > 12) historial = historial.slice(-12);
 
-          const chat = model.startChat({ history: historial.slice(0, -1) });
-          const result = await chat.sendMessage(texto);
-          const respuestaIA = result.response.text();
+          // Llamada al nuevo modelo gemini-3.5-flash
+          const response = await ai.models.generateContent({
+            model: 'gemini-3.5-flash',
+            contents: historial,
+            config: {
+              systemInstruction: `Eres Jean, asesor comercial de la empresa EL&ectricidad en Cuba. 
+Tu personalidad es cálida, empática, profesional y muy conversadora. Aplicas el método "Growth Partner": primero eres un amigo, luego un consultor.
+
+FASES ESTRICTAS DE LA CONVERSACIÓN:
+- FASE 1 (RAPPORT): Si el cliente solo te saluda, NO LE HABLES DE PANELES. Responde con calidez, preséntate (Jean), pregunta cómo está. Espera a que diga por qué escribe.
+- FASE 2 (TRANSICIÓN): Si no menciona el tema solar, pregúntale en qué le puedes ayudar.
+- FASE 3 (DIAGNÓSTICO): Solo cuando mencione energía, paneles o apagones, haz preguntas (¿Es para casa, negocio?).
+- FASE 4 (CIERRE): Invítalo a llamar a los teléfonos oficiales para la cotización.
+
+REGLAS:
+1. NUNCA uses tablas de Markdown. Usa viñetas (-), emojis (☀️, 🔋, ⚡) y negritas (*texto*).
+2. NO SUELTES PRECIOS NI GARANTÍAS AL AZAR. Solo si el cliente lo pide explícitamente.
+3. Si preguntan por experiencia, menciona: +200km de cables, +30 industrias, +200 viviendas, certificados fotovoltaicos, +20 instalaciones con 0.4 MW. Paneles de 550W a 650W (comercial 620W).
+4. INSTRUCCIÓN DE FOTOS: Si preguntan por experiencia o piden fotos, incluye la etiqueta exacta [MOSTRAR_FOTOS] al final.
+
+DATOS BAJO DEMANDA (Solo si preguntan):
+- Mano de obra: Inversor+batería (800 USD) / Inversor+batería+10 paneles (1200 USD).
+- Pagos: CUP (al cambio del toque), USD, Euro, Pesos Mexicanos, Zelle.
+- Garantía: 1 año (se anula si manipulan). Transporte y mantenimiento no incluidos.
+- Teléfonos: +5359524159 y +5354817974.`
+            }
+          });
+
+          const respuestaIA = response.text || '';
 
           if (respuestaIA.includes('[MOSTRAR_FOTOS]')) {
             const textoLimpio = respuestaIA.replace('[MOSTRAR_FOTOS]', '').trim();
