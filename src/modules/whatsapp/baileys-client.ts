@@ -43,16 +43,19 @@ export async function iniciarWhatsApp() {
       if (!msg.message || msg.key.fromMe) return;
       
       const texto = msg.message.conversation || msg.message.extendedTextMessage?.text;
-      const remitente = msg.key.remoteJid;
-      const whatsappId = remitente.split('@')[0]; 
+      
+      // Extraemos el JID real. Si WhatsApp oculta el número, remoteJidAlt suele tener el número real (@s.whatsapp.net)
+      const jidParaResponder = msg.key.remoteJid; 
+      const jidRealParaBD = msg.key.remoteJidAlt || msg.key.remoteJid; 
+      const whatsappIdInterno = jidRealParaBD.split('@')[0]; // Este puede ser el número o el LID
 
       if (texto) {
-        console.log(`\n⏱️ [INICIO] Mensaje de ${whatsappId}: ${texto}`);
+        console.log(`\n⏱️ [INICIO] Mensaje de ${whatsappIdInterno}: ${texto}`);
 
         try {
-          await sock.sendPresenceUpdate('composing', remitente);
+          await sock.sendPresenceUpdate('composing', jidParaResponder);
 
-          if (!chatsActivos.has(remitente)) {
+          if (!chatsActivos.has(jidParaResponder)) {
             const chat = ai.chats.create({
               model: MODELOS_DISPONIBLES[0],
               config: {
@@ -62,26 +65,26 @@ Tu personalidad es cálida, empática, profesional. Aplicas el método "Growth P
 FASES:
 - FASE 1 (RAPPORT): Si saluda, no hables de paneles. Preséntate, pregunta cómo está.
 - FASE 2 (DIAGNÓSTICO): Si menciona energía o apagones, pregunta si es para casa o negocio.
-- FASE 3 (CAPTACIÓN): Cuando pida cotización, dile que para guardarlo en el sistema y enviarle la cotización necesita: 
+- FASE 3 (CAPTACIÓN): Cuando pida cotización, dile que para guardarlo en el sistema necesita:
 1. *Nombre completo*
-2. *Número de teléfono de contacto*
+2. *Número de WhatsApp (con código de país)*
 3. *Correo electrónico*
 4. *Tipo de servicio* (Residencial, Comercial o Industrial)
 - FASE 4 (CIERRE): Agradece sus datos y dale los teléfonos: +5359524159 y +5354817974.
 
 REGLA CRÍTICA DE SISTEMA:
-Cuando el cliente te proporcione los 4 datos, DEBES incluir al final de tu respuesta esta etiqueta exacta sin negritas (reemplaza con los datos reales):
-[DATOS_JSON: {"nombre":"...", "telefono":"...", "email":"...", "servicio":"..."}]
+Cuando el cliente te proporcione los 4 datos, DEBES incluir al final de tu respuesta esta etiqueta exacta sin negritas:
+[DATOS_JSON: {"nombre":"...", "telefono_whatsapp":"...", "email":"...", "servicio":"..."}]
 
 REGLAS:
 1. NUNCA uses tablas. Usa viñetas (-) y emojis (☀️, 🔋, ⚡).
 2. NO des precios de mano de obra a menos que los pidan.`
               }
             });
-            chatsActivos.set(remitente, chat);
+            chatsActivos.set(jidParaResponder, chat);
           }
 
-          const chat = chatsActivos.get(remitente);
+          const chat = chatsActivos.get(jidParaResponder);
           let respuestaIA = '';
           let exito = false;
 
@@ -105,21 +108,21 @@ REGLAS:
               const datosCliente = JSON.parse(matchJSON[1]);
               console.log(`💾 [DB] RADAR ACTIVADO. Intentando guardar:`, datosCliente);
               
-              if (datosCliente.nombre && datosCliente.telefono && datosCliente.email && datosCliente.servicio) {
-                // Insertamos o actualizamos incluyendo el tipo de servicio
+              if (datosCliente.nombre && datosCliente.telefono_whatsapp && datosCliente.email && datosCliente.servicio) {
+                // Guardamos el numero que el cliente dio en 'telefono_contacto' y el ID interno en 'whatsapp_id'
                 await pool.query(
                   `INSERT INTO clientes (whatsapp_id, nombre_completo, telefono_contacto, email, tipo_servicio) 
                    VALUES ($1, $2, $3, $4, $5) 
                    ON CONFLICT (whatsapp_id) 
                    DO UPDATE SET nombre_completo = $2, telefono_contacto = $3, email = $4, tipo_servicio = $5`,
-                  [whatsappId, datosCliente.nombre, datosCliente.telefono, datosCliente.email, datosCliente.servicio]
+                  [whatsappIdInterno, datosCliente.nombre, datosCliente.telefono_whatsapp, datosCliente.email, datosCliente.servicio]
                 );
                 console.log('✅ [DB] Cliente guardado exitosamente en Neon.');
                 
                 // Aviso a tu WhatsApp
                 const tuNumeroAdmin = '5359524159@s.whatsapp.net'; 
                 await sock.sendMessage(tuNumeroAdmin, { 
-                  text: `💼 *NUEVO CLIENTE*\n👤 Nombre: ${datosCliente.nombre}\n📞 Tel: ${datosCliente.telefono}\n📧 Email: ${datosCliente.email}\n⚡ Servicio: ${datosCliente.servicio}` 
+                  text: `💼 *NUEVO CLIENTE*\n👤 Nombre: ${datosCliente.nombre}\n📱 WhatsApp: ${datosCliente.telefono_whatsapp}\n📧 Email: ${datosCliente.email}\n⚡ Servicio: ${datosCliente.servicio}` 
                 });
               } else {
                 console.log('⚠️ [DB] El JSON no tenía todos los campos requeridos.');
@@ -134,7 +137,7 @@ REGLAS:
           // --- ENVÍO DE RESPUESTA ---
           if (respuestaIA.includes('[MOSTRAR_FOTOS]')) {
             const textoLimpio = respuestaIA.replace('[MOSTRAR_FOTOS]', '').trim();
-            if (textoLimpio) await sock.sendMessage(remitente, { text: textoLimpio });
+            if (textoLimpio) await sock.sendMessage(jidParaResponder, { text: textoLimpio });
             
             const listaFotos = [
               'https://raw.githubusercontent.com/lyvesolarLE/electricidad-api/main/assets/Foto1.jpg',
@@ -142,16 +145,16 @@ REGLAS:
               'https://raw.githubusercontent.com/lyvesolarLE/electricidad-api/main/assets/Foto3.jpg'
             ];
             for (let i = 0; i < listaFotos.length; i++) {
-              await sock.sendMessage(remitente, { image: { url: listaFotos[i] }, caption: i === 0 ? 'Instalaciones reales' : '' });
+              await sock.sendMessage(jidParaResponder, { image: { url: listaFotos[i] }, caption: i === 0 ? 'Instalaciones reales' : '' });
               await new Promise(r => setTimeout(r, 500)); 
             }
           } else {
-            await sock.sendMessage(remitente, { text: respuestaIA });
+            await sock.sendMessage(jidParaResponder, { text: respuestaIA });
           }
           
         } catch (error) {
           console.error('❌ Error IA:', error);
-          await sock.sendMessage(remitente, { text: 'Disculpe, tenemos problemas técnicos.' });
+          await sock.sendMessage(jidParaResponder, { text: 'Disculpe, tenemos problemas técnicos.' });
         }
       }
     });
