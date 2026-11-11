@@ -62,12 +62,16 @@ Tu personalidad es cálida, empática, profesional. Aplicas el método "Growth P
 FASES:
 - FASE 1 (RAPPORT): Si saluda, no hables de paneles. Preséntate, pregunta cómo está.
 - FASE 2 (DIAGNÓSTICO): Si menciona energía o apagones, pregunta si es para casa o negocio.
-- FASE 3 (CAPTACIÓN): Cuando pida cotización o precios, dile que para guardarlo en el sistema necesita: *Nombre completo*, *Número de teléfono* y *Correo electrónico*.
+- FASE 3 (CAPTACIÓN): Cuando pida cotización, dile que para guardarlo en el sistema y enviarle la cotización necesita: 
+1. *Nombre completo*
+2. *Número de teléfono de contacto*
+3. *Correo electrónico*
+4. *Tipo de servicio* (Residencial, Comercial o Industrial)
 - FASE 4 (CIERRE): Agradece sus datos y dale los teléfonos: +5359524159 y +5354817974.
 
-REGLA CRÍTICA DE SISTEMA (OBLIGATORIO):
-Cuando el cliente te proporcione los 3 datos (nombre, teléfono y email), es OBLIGATORIO que agregues EXACTAMENTE esta etiqueta al final de tu respuesta, reemplazando con los datos reales. No uses negritas ni cambies la estructura:
-[DATOS_JSON: {"nombre":"AQUI EL NOMBRE", "telefono":"AQUI EL TELEFONO", "email":"AQUI EL EMAIL"}]
+REGLA CRÍTICA DE SISTEMA:
+Cuando el cliente te proporcione los 4 datos, DEBES incluir al final de tu respuesta esta etiqueta exacta sin negritas (reemplaza con los datos reales):
+[DATOS_JSON: {"nombre":"...", "telefono":"...", "email":"...", "servicio":"..."}]
 
 REGLAS:
 1. NUNCA uses tablas. Usa viñetas (-) y emojis (☀️, 🔋, ⚡).
@@ -93,38 +97,38 @@ REGLAS:
 
           if (!exito) throw new Error("Todos los modelos fallaron"); 
 
-          // --- EXTRACCIÓN DE DATOS CON JSON (A PRUEBA DE FALLOS) ---
+          // --- EXTRACCIÓN DE DATOS JSON ---
           const matchJSON = respuestaIA.match(/\[DATOS_JSON:\s*(\{.*?\})\]/s);
           
           if (matchJSON) {
             try {
-              // Convertimos el texto JSON a un objeto real de JavaScript
               const datosCliente = JSON.parse(matchJSON[1]);
               console.log(`💾 [DB] RADAR ACTIVADO. Intentando guardar:`, datosCliente);
               
-              if (datosCliente.nombre && datosCliente.telefono && datosCliente.email) {
+              if (datosCliente.nombre && datosCliente.telefono && datosCliente.email && datosCliente.servicio) {
+                // Insertamos o actualizamos incluyendo el tipo de servicio
                 await pool.query(
-                  `INSERT INTO clientes (whatsapp_id, nombre_completo, telefono_contacto, email) 
-                   VALUES ($1, $2, $3, $4) 
+                  `INSERT INTO clientes (whatsapp_id, nombre_completo, telefono_contacto, email, tipo_servicio) 
+                   VALUES ($1, $2, $3, $4, $5) 
                    ON CONFLICT (whatsapp_id) 
-                   DO UPDATE SET nombre_completo = $2, telefono_contacto = $3, email = $4`,
-                  [whatsappId, datosCliente.nombre, datosCliente.telefono, datosCliente.email]
+                   DO UPDATE SET nombre_completo = $2, telefono_contacto = $3, email = $4, tipo_servicio = $5`,
+                  [whatsappId, datosCliente.nombre, datosCliente.telefono, datosCliente.email, datosCliente.servicio]
                 );
                 console.log('✅ [DB] Cliente guardado exitosamente en Neon.');
                 
+                // Aviso a tu WhatsApp
                 const tuNumeroAdmin = '5359524159@s.whatsapp.net'; 
-                await sock.sendMessage(tuNumeroAdmin, { text: `💼 *NUEVO CLIENTE*\nNombre: ${datosCliente.nombre}\nTel: ${datosCliente.telefono}\nEmail: ${datosCliente.email}` });
+                await sock.sendMessage(tuNumeroAdmin, { 
+                  text: `💼 *NUEVO CLIENTE*\n👤 Nombre: ${datosCliente.nombre}\n📞 Tel: ${datosCliente.telefono}\n📧 Email: ${datosCliente.email}\n⚡ Servicio: ${datosCliente.servicio}` 
+                });
               } else {
                 console.log('⚠️ [DB] El JSON no tenía todos los campos requeridos.');
               }
             } catch (jsonError) {
-              console.error('❌ [DB] Error parseando el JSON o guardando en base de datos:', jsonError.message);
+              console.error('❌ [DB] Error guardando en base de datos:', jsonError.message);
             }
 
-            // Limpiamos la etiqueta para que el cliente no la vea
             respuestaIA = respuestaIA.replace(/\[DATOS_JSON:\s*\{.*?\}\]/s, '').trim();
-          } else {
-             console.log(`⚠️ [IA] La IA no generó la etiqueta DATOS_JSON en este mensaje.`);
           }
 
           // --- ENVÍO DE RESPUESTA ---
