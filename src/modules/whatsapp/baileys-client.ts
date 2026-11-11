@@ -29,9 +29,8 @@ export async function iniciarWhatsApp() {
       const { connection, lastDisconnect, qr } = update;
 
       if (qr) {
-        console.log('\n📲 HAZ CLIC AQUÍ PARA VER EL QR:');
         const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(qr)}`;
-        console.log(qrUrl);
+        console.log('\n📲 HAZ CLIC AQUÍ PARA VER EL QR:\n', qrUrl, '\n');
       }
 
       if (connection === 'open') {
@@ -50,7 +49,6 @@ export async function iniciarWhatsApp() {
       
       const texto = msg.message.conversation || msg.message.extendedTextMessage?.text;
       const remitente = msg.key.remoteJid;
-      // Limpiamos el ID de WhatsApp para tener una referencia
       const whatsappId = remitente.split('@')[0]; 
 
       if (texto) {
@@ -68,19 +66,18 @@ Tu personalidad es cálida, empática, profesional. Aplicas el método "Growth P
 
 FASES ESTRICTAS:
 - FASE 1 (RAPPORT): Si el cliente saluda, NO hables de paneles. Preséntate, pregunta cómo está.
-- FASE 2 (DIAGNÓSTICO): Si menciona energía o apagones, pregunta si es para casa o negocio y qué necesita.
-- FASE 3 (CAPTACIÓN DE DATOS - OBLIGATORIO): Llegado este punto, dile que para enviarle una cotización formal y guardarlo en el sistema, necesitas sus datos. Pídele amablemente: *Nombre completo*, *Número de teléfono de contacto* y *Correo electrónico*.
+- FASE 2 (DIAGNÓSTICO): Si menciona energía o apagones, pregunta si es para casa o negocio.
+- FASE 3 (CAPTACIÓN DE DATOS): Cuando el cliente pida cotización o precios, dile que para guardarlo en el sistema y enviarle la cotización formal necesitas sus datos. Pídele: *Nombre completo*, *Número de teléfono* y *Correo electrónico*.
 - FASE 4 (CIERRE): Agradece sus datos, dile que un especialista lo contactará y dale los teléfonos: +5359524159 y +5354817974.
 
 REGLA CRÍTICA DE SISTEMA:
-Cuando el cliente te proporcione los datos (nombre, teléfono y email), DEBES incluir al final de tu respuesta este código oculto exacto (sin negritas ni nada):
+Cuando el cliente te proporcione los 3 datos (nombre, teléfono y email), DEBES incluir al final de tu respuesta esta etiqueta exacta, sin cambiar nada, sin negritas:
 [DATOS_CLIENTE: nombre="AQUI EL NOMBRE", telefono="AQUI EL TELEFONO", email="AQUI EL EMAIL"]
 Si el cliente aún no te ha dado los 3 datos, NO uses esta etiqueta.
 
 REGLAS:
 1. NUNCA uses tablas. Usa viñetas (-), emojis (☀️, 🔋, ⚡) y negritas (*texto*).
-2. NO des precios de mano de obra (800/1200 USD) ni garantías a menos que el cliente los pida explícitamente.
-3. INSTRUCCIÓN DE FOTOS: Si piden fotos o experiencia, incluye la etiqueta [MOSTRAR_FOTOS] al final.`
+2. NO des precios de mano de obra ni garantías a menos que el cliente los pida.`
               }
             });
             chatsActivos.set(remitente, chat);
@@ -102,51 +99,48 @@ REGLAS:
 
           if (!exito) throw new Error("Todos los modelos fallaron"); 
 
-          // --- LÓGICA PARA EXTRAER LOS DATOS DEL CLIENTE ---
-          const regexDatos = /\[DATOS_CLIENTE:\s*nombre="([^"]+)",\s*telefono="([^"]+)",\s*email="([^"]+)"\]/i;
+          // --- EXTRACCIÓN DE DATOS (Regex más flexible) ---
+          const regexDatos = /\[DATOS_CLIENTE:\s*nombre=["']([^"']+)["'],\s*telefono=["']([^"']+)["'],\s*email=["']([^"']+)["']\]/i;
           const matchDatos = respuestaIA.match(regexDatos);
 
           if (matchDatos) {
             const [_, nombre, telefono, email] = matchDatos;
-            console.log(`💾 GUARDANDO CLIENTE: ${nombre} | ${telefono} | ${email}`);
+            console.log(`💾 DATOS DETECTADOS -> Nombre: ${nombre} | Tel: ${telefono} | Email: ${email}`);
             
             try {
-              await pool.query(
-                `UPDATE clientes SET nombre_completo = $1, telefono_contacto = $2, email = $3 WHERE whatsapp_id = $4`,
-                [nombre, telefono, email, whatsappId]
-              );
-              
-              // Si no existía, lo insertamos
+              // Consulta robusta: Inserta o actualiza si el whatsapp_id ya existe
               await pool.query(
                 `INSERT INTO clientes (whatsapp_id, nombre_completo, telefono_contacto, email) 
-                 VALUES ($1, $2, $3, $4) ON CONFLICT (whatsapp_id) DO NOTHING`,
+                 VALUES ($1, $2, $3, $4) 
+                 ON CONFLICT (whatsapp_id) 
+                 DO UPDATE SET nombre_completo = $2, telefono_contacto = $3, email = $4`,
                 [whatsappId, nombre, telefono, email]
               );
+              console.log('✅ Cliente guardado/actualizado en Neon con éxito.');
 
-              // Avisarte a tu WhatsApp personal
+              // Avisarte a tu WhatsApp
               const tuNumeroAdmin = '5359524159@s.whatsapp.net'; 
               await sock.sendMessage(tuNumeroAdmin, { 
-                text: `💼 *NUEVO CLIENTE REGISTRADO*\n\n👤 Nombre: ${nombre}\n📞 Teléfono: ${telefono}\n📧 Email: ${email}\n📱 WhatsApp: ${whatsappId}` 
+                text: `💼 *NUEVO CLIENTE EN CRM*\n\n👤 Nombre: ${nombre}\n📞 Teléfono: ${telefono}\n📧 Email: ${email}\n📱 WhatsApp: ${whatsappId}` 
               });
             } catch (dbError) {
-              console.error('⚠️ Error guardando en BD:', dbError.message);
+              console.error('❌ ERROR CRÍTICO EN BASE DE DATOS:', dbError.message);
             }
 
             // Limpiamos la etiqueta para que el cliente no la vea
             respuestaIA = respuestaIA.replace(regexDatos, '').trim();
           }
 
-          // --- LÓGICA DE FOTOS ---
+          // --- ENVÍO DE RESPUESTA ---
           if (respuestaIA.includes('[MOSTRAR_FOTOS]')) {
             const textoLimpio = respuestaIA.replace('[MOSTRAR_FOTOS]', '').trim();
-            await sock.sendMessage(remitente, { text: textoLimpio });
+            if (textoLimpio) await sock.sendMessage(remitente, { text: textoLimpio });
             
             const listaFotos = [
               'https://raw.githubusercontent.com/lyvesolarLE/electricidad-api/main/assets/Foto1.jpg',
               'https://raw.githubusercontent.com/lyvesolarLE/electricidad-api/main/assets/Foto2.jpg',
               'https://raw.githubusercontent.com/lyvesolarLE/electricidad-api/main/assets/Foto3.jpg'
             ];
-            
             for (let i = 0; i < listaFotos.length; i++) {
               await sock.sendMessage(remitente, { image: { url: listaFotos[i] }, caption: i === 0 ? 'Instalaciones reales' : '' });
               await new Promise(r => setTimeout(r, 1500)); 
