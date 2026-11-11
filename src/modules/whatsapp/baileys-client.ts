@@ -48,7 +48,6 @@ export async function iniciarWhatsApp() {
 
       if (texto) {
         console.log(`\n⏱️ [INICIO] Mensaje de ${whatsappId}: ${texto}`);
-        const tiempoInicio = Date.now();
 
         try {
           await sock.sendPresenceUpdate('composing', remitente);
@@ -57,7 +56,22 @@ export async function iniciarWhatsApp() {
             const chat = ai.chats.create({
               model: MODELOS_DISPONIBLES[0],
               config: {
-                systemInstruction: `Eres Jean, asesor comercial de EL&ectricidad. (Mantén tu prompt de Growth Partner y la etiqueta [DATOS_CLIENTE] aquí)`
+                systemInstruction: `Eres Jean, asesor comercial de EL&ectricidad en Cuba. 
+Tu personalidad es cálida, empática, profesional. Aplicas el método "Growth Partner".
+
+FASES:
+- FASE 1 (RAPPORT): Si saluda, no hables de paneles. Preséntate, pregunta cómo está.
+- FASE 2 (DIAGNÓSTICO): Si menciona energía o apagones, pregunta si es para casa o negocio.
+- FASE 3 (CAPTACIÓN): Cuando pida cotización o precios, dile que para guardarlo en el sistema necesita: *Nombre completo*, *Número de teléfono* y *Correo electrónico*.
+- FASE 4 (CIERRE): Agradece sus datos y dale los teléfonos: +5359524159 y +5354817974.
+
+REGLA CRÍTICA DE SISTEMA (OBLIGATORIO):
+Cuando el cliente te proporcione los 3 datos (nombre, teléfono y email), es OBLIGATORIO que agregues EXACTAMENTE esta etiqueta al final de tu respuesta, reemplazando con los datos reales. No uses negritas ni cambies la estructura:
+[DATOS_JSON: {"nombre":"AQUI EL NOMBRE", "telefono":"AQUI EL TELEFONO", "email":"AQUI EL EMAIL"}]
+
+REGLAS:
+1. NUNCA uses tablas. Usa viñetas (-) y emojis (☀️, 🔋, ⚡).
+2. NO des precios de mano de obra a menos que los pidan.`
               }
             });
             chatsActivos.set(remitente, chat);
@@ -67,44 +81,53 @@ export async function iniciarWhatsApp() {
           let respuestaIA = '';
           let exito = false;
 
-          // ⏱️ Medimos cuánto tarda la IA
-          const tiempoIAInicio = Date.now();
           for (const modelo of MODELOS_DISPONIBLES) {
             try {
               chat.model = modelo; 
               const response = await chat.sendMessage({ message: texto });
               respuestaIA = response.text || '';
               exito = true;
-              console.log(`⏱️ [IA] Respondió en ${Date.now() - tiempoIAInicio}ms usando ${modelo}`);
               break; 
-            } catch (err) { await new Promise(r => setTimeout(r, 500)); } // Bajamos la espera a 0.5s
+            } catch (err) { await new Promise(r => setTimeout(r, 500)); }
           }
+
           if (!exito) throw new Error("Todos los modelos fallaron"); 
 
-          // --- GUARDADO EN BASE DE DATOS ---
-          const regexDatos = /\[DATOS_CLIENTE:\s*nombre=["']([^"']+)["'],\s*telefono=["']([^"']+)["'],\s*email=["']([^"']+)["']\]/i;
-          const matchDatos = respuestaIA.match(regexDatos);
-
-          if (matchDatos) {
-            const [_, nombre, telefono, email] = matchDatos;
-            console.log(`⏱️ [DB] Guardando cliente...`);
-            
+          // --- EXTRACCIÓN DE DATOS CON JSON (A PRUEBA DE FALLOS) ---
+          const matchJSON = respuestaIA.match(/\[DATOS_JSON:\s*(\{.*?\})\]/s);
+          
+          if (matchJSON) {
             try {
-              await pool.query(
-                `INSERT INTO clientes (whatsapp_id, nombre_completo, telefono_contacto, email) 
-                 VALUES ($1, $2, $3, $4) 
-                 ON CONFLICT (whatsapp_id) 
-                 DO UPDATE SET nombre_completo = $2, telefono_contacto = $3, email = $4`,
-                [whatsappId, nombre, telefono, email]
-              );
-              const tuNumeroAdmin = '5359524159@s.whatsapp.net'; 
-              await sock.sendMessage(tuNumeroAdmin, { text: `💼 *NUEVO CLIENTE*\nNombre: ${nombre}\nTel: ${telefono}\nEmail: ${email}` });
-            } catch (dbError) { console.error('❌ ERROR DB:', dbError.message); }
+              // Convertimos el texto JSON a un objeto real de JavaScript
+              const datosCliente = JSON.parse(matchJSON[1]);
+              console.log(`💾 [DB] RADAR ACTIVADO. Intentando guardar:`, datosCliente);
+              
+              if (datosCliente.nombre && datosCliente.telefono && datosCliente.email) {
+                await pool.query(
+                  `INSERT INTO clientes (whatsapp_id, nombre_completo, telefono_contacto, email) 
+                   VALUES ($1, $2, $3, $4) 
+                   ON CONFLICT (whatsapp_id) 
+                   DO UPDATE SET nombre_completo = $2, telefono_contacto = $3, email = $4`,
+                  [whatsappId, datosCliente.nombre, datosCliente.telefono, datosCliente.email]
+                );
+                console.log('✅ [DB] Cliente guardado exitosamente en Neon.');
+                
+                const tuNumeroAdmin = '5359524159@s.whatsapp.net'; 
+                await sock.sendMessage(tuNumeroAdmin, { text: `💼 *NUEVO CLIENTE*\nNombre: ${datosCliente.nombre}\nTel: ${datosCliente.telefono}\nEmail: ${datosCliente.email}` });
+              } else {
+                console.log('⚠️ [DB] El JSON no tenía todos los campos requeridos.');
+              }
+            } catch (jsonError) {
+              console.error('❌ [DB] Error parseando el JSON o guardando en base de datos:', jsonError.message);
+            }
 
-            respuestaIA = respuestaIA.replace(regexDatos, '').trim();
+            // Limpiamos la etiqueta para que el cliente no la vea
+            respuestaIA = respuestaIA.replace(/\[DATOS_JSON:\s*\{.*?\}\]/s, '').trim();
+          } else {
+             console.log(`⚠️ [IA] La IA no generó la etiqueta DATOS_JSON en este mensaje.`);
           }
 
-          // --- ENVÍO DE RESPUESTA Y FOTOS ---
+          // --- ENVÍO DE RESPUESTA ---
           if (respuestaIA.includes('[MOSTRAR_FOTOS]')) {
             const textoLimpio = respuestaIA.replace('[MOSTRAR_FOTOS]', '').trim();
             if (textoLimpio) await sock.sendMessage(remitente, { text: textoLimpio });
@@ -116,13 +139,11 @@ export async function iniciarWhatsApp() {
             ];
             for (let i = 0; i < listaFotos.length; i++) {
               await sock.sendMessage(remitente, { image: { url: listaFotos[i] }, caption: i === 0 ? 'Instalaciones reales' : '' });
-              await new Promise(r => setTimeout(r, 500)); // ⚡ Bajamos la espera a 0.5s para que sea más rápido
+              await new Promise(r => setTimeout(r, 500)); 
             }
           } else {
             await sock.sendMessage(remitente, { text: respuestaIA });
           }
-
-          console.log(`⏱️ [FIN] Proceso total tomó ${Date.now() - tiempoInicio}ms`);
           
         } catch (error) {
           console.error('❌ Error IA:', error);
